@@ -14,8 +14,10 @@ from utils import perspective, Plane, load_camera_params, bilinear_sampler, warp
 
 from tf.transformations import euler_from_quaternion
 
-image = cv2.cvtColor(cv2.imread('frame_0_input.png'), cv2.COLOR_BGR2RGB)
-image = cv2.cvtColor(cv2.imread('dummy.png'), cv2.COLOR_BGR2GRAY)
+image = cv2.cvtColor(cv2.imread('frame_0_input.png'), cv2.COLOR_BGR2GRAY)
+image = cv2.cvtColor(cv2.imread('frame_0_confidence.png'), cv2.COLOR_BGR2GRAY)
+image = cv2.cvtColor(cv2.imread('frame_0_prediction.png'), cv2.COLOR_BGR2GRAY)
+# image = cv2.cvtColor(cv2.imread('dummy.png'), cv2.COLOR_BGR2GRAY)
 
 
 import rospy
@@ -33,18 +35,21 @@ focal_length = 0.008
 pixel_size = 0.00000586
 img_width = 640
 img_height = 320
+camera_width = 1920
+camera_height = 1200
 # position relative to base_link
 camera_translation = [0.8031200000000001, 0.1, 0.9505]
-camera_translation = [0, 0, 5]
 # TODO what happens with other rotational values?
 camera_rotation = [0.5, -0.5, 0.5, -0.5]
+
+camera_translation_height = [0, 0, camera_translation[2]]
 
 # rotation around: x, y, z
 (cam_roll, cam_pitch, cam_yaw) = euler_from_quaternion(
     [camera_rotation[0], camera_rotation[1], camera_rotation[2], camera_rotation[3]])
 
 # map info
-TARGET_W_m, TARGET_H_m = 100, 70
+TARGET_W_m, TARGET_H_m = 20, 15
 RESOLUTION = 0.05    # [m / cells]
 
 TARGET_W, TARGET_H = int(TARGET_W_m/RESOLUTION), int(TARGET_H_m/RESOLUTION)
@@ -73,11 +78,15 @@ def image_to_3D_groundplane(x, y):
     # X,Y ... 3D coordinate on ground (Z = 0) relative to camera center (inclusive translation & rotation) [m]
 
     print("")
-    print("c", x, y)
+    print("input", x, y)
+    x = x / img_width * camera_width
+    y = y / img_height * camera_height
+
+    print("camer", x, y)
     # treat as if middle is zero
-    x = x - img_width / 2
-    y = y - img_height / 2
-    print("c", x, y)
+    x = x - camera_width / 2
+    y = y - camera_height / 2
+    print("zeroed", x, y)
 
     x *= pixel_size
     y *= pixel_size
@@ -85,11 +94,11 @@ def image_to_3D_groundplane(x, y):
     pixel = [x, y, focal_length]
     print("pixel 2D", pixel)
     # transfer pixel coordinate to 3D coordinate
-    pixel = transfer_data(cam_roll, cam_pitch, cam_yaw, camera_translation, pixel)
+    pixel = transfer_data(cam_roll, cam_pitch, cam_yaw, camera_translation_height, pixel)
     print("pixel 3D", pixel)
 
     # project 3D pixel coordinate to ground (similar triangles, long1/short1 = long2/short2 -> long1 = short1 * long2/short2)
-    h = camera_translation[2]   # total height of center (long side)
+    h = camera_translation_height[2]   # total height of center (long side)
     dh = h - pixel[2]   # height difference of center to pixel (short side)
 
     if dh <= 0:
@@ -99,6 +108,9 @@ def image_to_3D_groundplane(x, y):
     X = pixel[0] * h / dh
     Y = pixel[1] * h / dh
 
+    X = X / camera_width * img_width
+    Y = Y / camera_height * img_height
+
     return [X, Y]
 
 
@@ -106,7 +118,7 @@ def ipm_from_opencv(image, source_points, target_points):
     # Compute projection matrix
     M = cv2.getPerspectiveTransform(source_points, target_points)
     # Warp the image
-    warped = cv2.warpPerspective(image, M, (TARGET_W, TARGET_H), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT,
+    warped = cv2.warpPerspective(image, M, (TARGET_W, TARGET_H), flags=cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT,
                                  borderValue=0)
     return warped
 
@@ -173,11 +185,11 @@ if __name__ == '__main__':
     occ_map = numpy_to_occupancy_grid(warped2.astype(np.int8))
 
     occ_map.header.stamp = rospy.Time.now()
-    occ_map.header.frame_id = "map"
+    occ_map.header.frame_id = "base_link"
     occ_map.info.resolution = RESOLUTION
     occ_map.info.width = TARGET_W
     occ_map.info.height = TARGET_H
-    occ_map.info.origin = Pose(Point(0, 0, 0),
+    occ_map.info.origin = Pose(Point(camera_translation[0] + minLeft*RESOLUTION, camera_translation[1] - TARGET_H_m/2, 0),
                                     Quaternion(0, 0, 0, 1))
 
     # while True:
