@@ -1,17 +1,31 @@
+# TODO image is flipped?
+
+
 import math
 import time
 
 import cv2
 import matplotlib.pyplot as plt
 import numpy as np
+from geometry_msgs.msg import Pose, Point, Quaternion
+from ros_numpy.occupancy_grid import numpy_to_occupancy_grid
 
 from utils import perspective, Plane, load_camera_params, bilinear_sampler, warped
 
 from tf.transformations import euler_from_quaternion
 
 image = cv2.cvtColor(cv2.imread('frame_0_input.png'), cv2.COLOR_BGR2RGB)
-image = cv2.cvtColor(cv2.imread('dummy.png'), cv2.COLOR_BGR2RGB)
-interpolation_fn = bilinear_sampler  # or warped
+image = cv2.cvtColor(cv2.imread('dummy.png'), cv2.COLOR_BGR2GRAY)
+
+
+import rospy
+from cv_bridge import CvBridge
+from nav_msgs.msg import OccupancyGrid, MapMetaData
+from sensor_msgs.msg import Image, CameraInfo
+# Publishers
+pub_map = rospy.Publisher('/map_terrain2', OccupancyGrid, queue_size=1)
+pub_map_info = rospy.Publisher('/map_terrain_info', MapMetaData, queue_size=1)
+
 
 
 # camera info
@@ -30,8 +44,10 @@ camera_rotation = [0.5, -0.5, 0.5, -0.5]
     [camera_rotation[0], camera_rotation[1], camera_rotation[2], camera_rotation[3]])
 
 # map info
-TARGET_W, TARGET_H = 300, 200
-RESOLUTION = 100    # [cells / m]
+TARGET_W_m, TARGET_H_m = 100, 70
+RESOLUTION = 0.05    # [m / cells]
+
+TARGET_W, TARGET_H = int(TARGET_W_m/RESOLUTION), int(TARGET_H_m/RESOLUTION)
 
 
 def transfer_data(x_angle, y_angle, z_angle, translation, point):
@@ -89,7 +105,6 @@ def image_to_3D_groundplane(x, y):
 def ipm_from_opencv(image, source_points, target_points):
     # Compute projection matrix
     M = cv2.getPerspectiveTransform(source_points, target_points)
-    print(M)
     # Warp the image
     warped = cv2.warpPerspective(image, M, (TARGET_W, TARGET_H), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT,
                                  borderValue=0)
@@ -97,6 +112,7 @@ def ipm_from_opencv(image, source_points, target_points):
 
 
 if __name__ == '__main__':
+    rospy.init_node("ipm", anonymous=True)
     ################
     # OpenCV
     ################
@@ -118,9 +134,15 @@ if __name__ == '__main__':
     t = []
     for i in s:
         p = image_to_3D_groundplane(i[0], i[1])
-        p[1] += TARGET_H/2
-        t.append(p)
+        t.append([p[0] / RESOLUTION, p[1] / RESOLUTION])
     t = np.asarray(t, dtype=np.float32)
+    # preprocess target points to center the projected image inside the map
+    minLeft = np.min(t, axis=0)[0]
+    for p in t:
+        # move points (-> map) towards center
+        p[1] += TARGET_H/2
+        # move points towards left edge of map (to minimize zero values)
+        p[0] -= minLeft
     print("t", t)
 
 
@@ -145,3 +167,20 @@ if __name__ == '__main__':
 
     plt.tight_layout()
     plt.show()
+
+
+    # publish ros topic
+    occ_map = numpy_to_occupancy_grid(warped2.astype(np.int8))
+
+    occ_map.header.stamp = rospy.Time.now()
+    occ_map.header.frame_id = "map"
+    occ_map.info.resolution = RESOLUTION
+    occ_map.info.width = TARGET_W
+    occ_map.info.height = TARGET_H
+    occ_map.info.origin = Pose(Point(0, 0, 0),
+                                    Quaternion(0, 0, 0, 1))
+
+    # while True:
+    pub_map.publish(occ_map)
+    #     rospy.sleep(0.5)
+    # pub_map_info.publish(terrain_msgs.info)
