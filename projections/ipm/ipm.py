@@ -1,25 +1,23 @@
-# TODO image is flipped?
-
-
-import math
 import time
-
 import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 from geometry_msgs.msg import Pose, Point, Quaternion
 from ros_numpy.occupancy_grid import numpy_to_occupancy_grid
-
-from utils import perspective, Plane, load_camera_params, bilinear_sampler, warped
-
 from tf.transformations import euler_from_quaternion
 
-image = cv2.cvtColor(cv2.imread('frame_0_input.png'), cv2.COLOR_BGR2GRAY)
-image = cv2.cvtColor(cv2.imread('frame_0_confidence.png'), cv2.COLOR_BGR2GRAY)
-image = cv2.cvtColor(cv2.imread('frame_0_prediction.png'), cv2.COLOR_BGR2GRAY)
-# image = cv2.cvtColor(cv2.imread('dummy.png'), cv2.COLOR_BGR2GRAY)
+
+# image stuff
+output_path = "output/"
+img_name = 'stuttgart_01_000000_003715_leftImg8bit.png'
+# img_name = 'frame_0_input.png'
+# img_name = 'frame_0_confidence.png'
+# img_name = 'frame_0_prediction.png'
+# img_name = 'dummy.png'
 
 
+
+# ROS stuff
 import rospy
 from cv_bridge import CvBridge
 from nav_msgs.msg import OccupancyGrid, MapMetaData
@@ -29,7 +27,7 @@ pub_map = rospy.Publisher('/map_terrain2', OccupancyGrid, queue_size=1)
 pub_map_info = rospy.Publisher('/map_terrain_info', MapMetaData, queue_size=1)
 
 
-
+############################################# PARAMETERS
 # camera info
 focal_length = 0.008
 pixel_size = 0.00000586
@@ -53,6 +51,12 @@ TARGET_W_m, TARGET_H_m = 20, 15
 RESOLUTION = 0.05    # [m / cells]
 
 TARGET_W, TARGET_H = int(TARGET_W_m/RESOLUTION), int(TARGET_H_m/RESOLUTION)
+
+image = cv2.cvtColor(cv2.imread(img_name), cv2.COLOR_BGR2GRAY)
+
+import os
+if not os.path.exists(output_path):
+    os.makedirs(output_path)
 
 
 def transfer_data(x_angle, y_angle, z_angle, translation, point):
@@ -82,7 +86,7 @@ def image_to_3D_groundplane(x, y):
     x = x / img_width * camera_width
     y = y / img_height * camera_height
 
-    print("camer", x, y)
+    print("camera", x, y)
     # treat as if middle is zero
     x = x - camera_width / 2
     y = y - camera_height / 2
@@ -108,8 +112,8 @@ def image_to_3D_groundplane(x, y):
     X = pixel[0] * h / dh
     Y = pixel[1] * h / dh
 
-    X = X / camera_width * img_width
-    Y = Y / camera_height * img_height
+    # X = X / camera_width * img_width
+    # Y = Y / camera_height * img_height
 
     return [X, Y]
 
@@ -146,6 +150,7 @@ if __name__ == '__main__':
     t = []
     for i in s:
         p = image_to_3D_groundplane(i[0], i[1])
+        print("p", p)
         t.append([p[0] / RESOLUTION, p[1] / RESOLUTION])
     t = np.asarray(t, dtype=np.float32)
     # preprocess target points to center the projected image inside the map
@@ -161,28 +166,15 @@ if __name__ == '__main__':
     # Warp the image
     stt = time.time()
     warped2 = ipm_from_opencv(image, s, t)
-    print("time", time.time() - stt)
-
-
-    # Draw results
-    fig, ax = plt.subplots(1, 2)
-
-    ax[0].imshow(image)
-    ax[0].set_title('Front View')
-    ax[0].set_xlabel('width')
-    ax[0].set_ylabel('height')
-
-    ax[1].imshow(warped2)
-    ax[1].set_title('IPM from OpenCv')
-    ax[1].set_xlabel('TARGET_W')
-    ax[1].set_ylabel('TARGET_H')
-
-    plt.tight_layout()
-    plt.show()
+    dt = time.time() - stt
+    print("warp time", dt)
 
 
     # publish ros topic
+    stt = time.time()
     occ_map = numpy_to_occupancy_grid(warped2.astype(np.int8))
+    dt2 = time.time() - stt
+    print("convert 2 map time", dt2)
 
     occ_map.header.stamp = rospy.Time.now()
     occ_map.header.frame_id = "base_link"
@@ -191,6 +183,22 @@ if __name__ == '__main__':
     occ_map.info.height = TARGET_H
     occ_map.info.origin = Pose(Point(camera_translation[0] + minLeft*RESOLUTION, camera_translation[1] - TARGET_H_m/2, 0),
                                     Quaternion(0, 0, 0, 1))
+
+
+    # Draw results
+    fig, ax = plt.subplots(1, 2)
+    fig.suptitle(img_name + "\ntimes: warp {:.6f}s\nconvert2map {:.6f}s".format(dt, dt2))
+    ax[0].imshow(image)
+    ax[0].set_title('Front View')
+    ax[0].set_xlabel('width')
+    ax[0].set_ylabel('height')
+    ax[1].imshow(warped2)
+    ax[1].set_title('Generated Map')
+    ax[1].set_xlabel('TARGET_W')
+    ax[1].set_ylabel('TARGET_H -> forward')
+    plt.tight_layout()
+    plt.savefig(output_path + img_name)
+    plt.show()
 
     # while True:
     pub_map.publish(occ_map)
