@@ -12,7 +12,7 @@ output_path = "output/"
 img_name = 'stuttgart_01_000000_003715_leftImg8bit.png'
 # img_name = 'frame_0_input.png'
 # img_name = 'frame_0_confidence.png'
-# img_name = 'frame_0_prediction.png'
+img_name = 'frame_0_prediction.png'
 # img_name = 'dummy.png'
 
 
@@ -118,9 +118,7 @@ def image_to_3D_groundplane(x, y):
     return [X, Y]
 
 
-def ipm_from_opencv(image, source_points, target_points):
-    # Compute projection matrix
-    M = cv2.getPerspectiveTransform(source_points, target_points)
+def ipm_from_opencv(image, M):
     # Warp the image
     warped = cv2.warpPerspective(image, M, (TARGET_W, TARGET_H), flags=cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT,
                                  borderValue=0)
@@ -162,10 +160,13 @@ if __name__ == '__main__':
         p[0] -= minLeft
     print("t", t)
 
+    # Compute projection matrix
+    M = cv2.getPerspectiveTransform(s, t)
+
 
     # Warp the image
     stt = time.time()
-    warped2 = ipm_from_opencv(image, s, t)
+    warped2 = ipm_from_opencv(image, M)
     dt = time.time() - stt
     print("warp time", dt)
 
